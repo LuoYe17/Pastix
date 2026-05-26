@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>Pastix</AssemblyName>
+    <RootNamespace>Pastix</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Optimize>true</Optimize>
+    <DebugType>none</DebugType>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+</Project>

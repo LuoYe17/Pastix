@@ -1,0 +1,68 @@
+name: Bug 报告
+description: 报告一个 bug 帮助 Pastix 变得更好
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 描述
+      description: 简短描述发生了什么。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 按 PrintScreen
+        2. 在选区里画一个箭头
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Pastix 版本
+      placeholder: v0.x.x 或 commit hash
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Windows 版本
+      placeholder: Windows 11 23H2 / Windows 10 22H2
+    validations:
+      required: true
+
+  - type: input
+    id: monitor
+    attributes:
+      label: 显示器配置
+      placeholder: 单屏 1920x1080 / 双屏 4K + 1080p / DPI 150%
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 截图或录屏
+      description: 直接拖入即可。
+    validations:
+      required: false

@@ -1,0 +1,39 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Build (Release)
+        run: dotnet build src/Pastix/Pastix.csproj -c Release
+
+      - name: Show output size
+        shell: pwsh
+        run: |
+          $exe = "src/Pastix/bin/Release/net48/Pastix.exe"
+          $sizeKB = [math]::Round((Get-Item $exe).Length / 1KB, 1)
+          Write-Host "Pastix.exe size: $sizeKB KB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pastix
+          path: src/Pastix/bin/Release/net48/Pastix.exe
+          if-no-files-found: error

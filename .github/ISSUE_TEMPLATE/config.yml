@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用问题 / 讨论
+    url: https://github.com/LuoYe17/Pastix/discussions
+    about: 不是 bug 也不是功能建议，而是想问问题或讨论想法
