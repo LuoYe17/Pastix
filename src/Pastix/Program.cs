@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.IO;
 using System.Threading;
 using System.Windows.Forms;
 using Pastix.Native;
@@ -63,7 +64,7 @@ namespace Pastix
         private HistoryWindow _window;
         private Settings _settings;
         private string _hotkeyLabel = "Ctrl+Shift+V";
-        private string _pendingPaste;
+        private ClipboardItem _pendingPaste;
         private System.Windows.Forms.Timer _pasteTimer;
 
         public MainForm()
@@ -84,7 +85,12 @@ namespace Pastix
 
             InitTray();
 
-            _clipboard = new ClipboardWatcher(Handle) { MaxItems = _settings.MaxHistoryItems };
+            _clipboard = new ClipboardWatcher(Handle)
+            {
+                MaxItems = _settings.MaxHistoryItems,
+                MaxImageItems = _settings.MaxImageItems,
+                MaxTotalBytes = (long)_settings.MaxTotalMB * 1024 * 1024,
+            };
             _clipboard.Start();
             // 启动时若磁盘恢复出来的条目已超过新上限，立即裁剪
             _clipboard.Trim();
@@ -211,6 +217,8 @@ namespace Pastix
             if (_clipboard != null)
             {
                 _clipboard.MaxItems = _settings.MaxHistoryItems;
+                _clipboard.MaxImageItems = _settings.MaxImageItems;
+                _clipboard.MaxTotalBytes = (long)_settings.MaxTotalMB * 1024 * 1024;
                 _clipboard.Trim();
             }
         }
@@ -281,7 +289,7 @@ namespace Pastix
             }
         }
 
-        private void OnItemChosen(string text)
+        private void OnItemChosen(ClipboardItem item)
         {
             if (_window != null)
             {
@@ -289,21 +297,35 @@ namespace Pastix
                 _window = null;
             }
 
-            if (string.IsNullOrEmpty(text)) return;
+            if (item == null) return;
 
             try
             {
-                _clipboard.SuppressNext(text);
-                Clipboard.SetText(text);
+                if (item.Type == ClipboardItemType.Image)
+                {
+                    if (item.ImageBytes == null || item.ImageBytes.Length == 0) return;
+                    _clipboard.SuppressNextImage(item.ImageHash);
+                    using (var stream = new MemoryStream(item.ImageBytes))
+                    using (var img = Image.FromStream(stream))
+                    {
+                        Clipboard.SetImage(img);
+                    }
+                }
+                else
+                {
+                    if (string.IsNullOrEmpty(item.Text)) return;
+                    _clipboard.SuppressNext(item.Text);
+                    Clipboard.SetText(item.Text);
+                }
             }
             catch
             {
-                // 剪贴板被独占时静默放弃，符合"动作即反馈"原则
+                // 剪贴板被独占时静默放弃
                 return;
             }
 
             // 等焦点回到原前台窗口，再注入 Ctrl+V
-            _pendingPaste = text;
+            _pendingPaste = item;
             _pasteTimer.Stop();
             _pasteTimer.Start();
         }

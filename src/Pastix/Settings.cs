@@ -18,10 +18,20 @@ namespace Pastix
         public const int MaxHistoryItemsLimit = 500;
         public const int DefaultHistoryItems = 100;
 
+        // 图片相关上限：v1 不在 SettingsForm 暴露 UI，仅作为代码默认值。
+        public const int DefaultMaxImageItems = 20;
+        public const int MinMaxImageItems = 0;
+        public const int MaxMaxImageItemsLimit = 200;
+        public const int DefaultMaxTotalMB = 50;
+        public const int MinMaxTotalMB = 10;
+        public const int MaxMaxTotalMBLimit = 500;
+
         public bool FirstRunCompleted { get; set; }
         public int HotkeyKey { get; set; } = (int)Keys.V;
         public int HotkeyModifiers { get; set; } = (int)(HotkeyManager.MOD_CONTROL | HotkeyManager.MOD_SHIFT);
         public int MaxHistoryItems { get; set; } = DefaultHistoryItems;
+        public int MaxImageItems { get; set; } = DefaultMaxImageItems;
+        public int MaxTotalMB { get; set; } = DefaultMaxTotalMB;
         public bool AutoStart { get; set; } = false;
         public int LaunchCount { get; set; } = 0;
         public bool AutoStartPromptShown { get; set; } = false;
@@ -70,6 +80,14 @@ namespace Pastix
                             if (int.TryParse(value, out int n) && n >= MinHistoryItems && n <= MaxHistoryItemsLimit)
                                 s.MaxHistoryItems = n;
                             break;
+                        case "MaxImageItems":
+                            if (int.TryParse(value, out int mi) && mi >= MinMaxImageItems && mi <= MaxMaxImageItemsLimit)
+                                s.MaxImageItems = mi;
+                            break;
+                        case "MaxTotalMB":
+                            if (int.TryParse(value, out int mt) && mt >= MinMaxTotalMB && mt <= MaxMaxTotalMBLimit)
+                                s.MaxTotalMB = mt;
+                            break;
                         case "AutoStart":
                             s.AutoStart = string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
                             break;
@@ -100,6 +118,8 @@ namespace Pastix
                 sb.AppendLine("HotkeyKey=" + HotkeyKey);
                 sb.AppendLine("HotkeyModifiers=" + HotkeyModifiers);
                 sb.AppendLine("MaxHistoryItems=" + MaxHistoryItems);
+                sb.AppendLine("MaxImageItems=" + MaxImageItems);
+                sb.AppendLine("MaxTotalMB=" + MaxTotalMB);
                 sb.AppendLine("AutoStart=" + (AutoStart ? "true" : "false"));
                 sb.AppendLine("LaunchCount=" + LaunchCount);
                 sb.AppendLine("AutoStartPromptShown=" + (AutoStartPromptShown ? "true" : "false"));

@@ -14,7 +14,7 @@ namespace Pastix
     /// </summary>
     internal sealed class HistoryWindow : Form
     {
-        public event Action<string> ItemChosen;
+        public event Action<ClipboardItem> ItemChosen;
         public event Action Cancelled;
         public event Action<ClipboardItem> ItemPinToggleRequested;
         public event Action<ClipboardItem> ItemRemoveRequested;
@@ -23,12 +23,16 @@ namespace Pastix
         private const int CornerRadius = 12;
         private const int Pad = 12;
         private const int SearchHeight = 32;
-        private const int RowHeight = 36;
+        private const int RowHeightText = 36;
+        private const int RowHeightImage = 80;
         private const int StatusHeight = 28;
         private const int ListMaxHeight = 400;
         private const int ListEmptyHeight = 80;
         private const int PreviewMaxChars = 80;
         private const int WS_EX_TOOLWINDOW = 0x00000080;
+
+        private static int RowHeightOf(ClipboardItem it) =>
+            it.Type == ClipboardItemType.Image ? RowHeightImage : RowHeightText;
 
         private readonly SearchBox _search;
         private readonly ListPanel _list;
@@ -67,7 +71,7 @@ namespace Pastix
             _list = new ListPanel
             {
                 Location = new Point(Pad, Pad + SearchHeight + Pad),
-                Size = new Size(CardWidth - Pad * 2, RowHeight),
+                Size = new Size(CardWidth - Pad * 2, RowHeightText),
                 BackColor = BackColor,
             };
             _list.ItemActivated += idx => Choose(idx);
@@ -172,7 +176,7 @@ namespace Pastix
         {
             if (idx < 0 || idx >= _filtered.Count) return;
             _suppressDeactivate = true;
-            ItemChosen?.Invoke(_filtered[idx].Text);
+            ItemChosen?.Invoke(_filtered[idx]);
         }
 
         private void RequestPinToggle(int idx)
@@ -209,15 +213,30 @@ namespace Pastix
         private void ApplyFilter()
         {
             string q = _search.Inner.Text;
+            bool filtering = !string.IsNullOrEmpty(q);
             _filtered.Clear();
             int pinned = 0;
+            int textCount = 0;
+            int imageCount = 0;
             foreach (var it in _all)
             {
-                if (string.IsNullOrEmpty(q) ||
-                    it.Text.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                bool include;
+                if (it.Type == ClipboardItemType.Image)
+                {
+                    // 图片永远保留，不参与文字过滤
+                    include = true;
+                }
+                else
+                {
+                    include = !filtering ||
+                        (it.Text != null && it.Text.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0);
+                }
+                if (include)
                 {
                     _filtered.Add(it);
                     if (it.Pinned) pinned++;
+                    if (it.Type == ClipboardItemType.Image) imageCount++;
+                    else textCount++;
                 }
             }
 
@@ -244,15 +263,16 @@ namespace Pastix
 
             _list.SetItems(_filtered, hasNoSource: _all.Count == 0, pinnedCount: pinned, selected: newSelected);
 
-            // 状态栏：搜索态保留 shown/total；非搜索态显示 总数（置顶数）
-            _status.SetCounts(_filtered.Count, _all.Count, pinned, isFiltering: !string.IsNullOrEmpty(q));
+            _status.SetCounts(_filtered.Count, _all.Count, textCount, imageCount, pinned, isFiltering: filtering);
             RelayoutAndResize();
         }
 
         private void RelayoutAndResize()
         {
+            int contentH = 0;
+            for (int i = 0; i < _filtered.Count; i++) contentH += RowHeightOf(_filtered[i]);
             int listH = _filtered.Count > 0
-                ? Math.Min(_filtered.Count * RowHeight, ListMaxHeight)
+                ? Math.Min(contentH, ListMaxHeight)
                 : ListEmptyHeight;
 
             int totalH = Pad + SearchHeight + Pad + listH + StatusHeight;
@@ -290,13 +310,29 @@ namespace Pastix
                 BackColor = BarBg;
             }
 
-            public void SetCounts(int shown, int total, int pinned, bool isFiltering)
+            public void SetCounts(int shown, int total, int textCount, int imageCount, int pinned, bool isFiltering)
             {
-                string countPart = isFiltering
-                    ? string.Format("{0}/{1} 条", shown, total)
-                    : string.Format("{0} 条", total);
-                if (pinned > 0)
-                    countPart += string.Format("（{0} 置顶）", pinned);
+                string countPart;
+                if (isFiltering)
+                {
+                    countPart = string.Format("{0}/{1} 条", shown, total);
+                    if (pinned > 0) countPart += string.Format("（{0} 置顶）", pinned);
+                }
+                else if (imageCount == 0)
+                {
+                    countPart = string.Format("{0} 条", total);
+                    if (pinned > 0) countPart += string.Format("（{0} 置顶）", pinned);
+                }
+                else if (textCount == 0)
+                {
+                    countPart = string.Format("{0} 张图片", total);
+                    if (pinned > 0) countPart += string.Format("（{0} 置顶）", pinned);
+                }
+                else
+                {
+                    countPart = string.Format("{0} 条（{1} 文本 · {2} 图片", total, textCount, imageCount);
+                    countPart += pinned > 0 ? string.Format("，{0} 置顶）", pinned) : "）";
+                }
 
                 _text = countPart + " · ↑↓ 选择 · Enter 粘贴 · P 置顶 · Del 删除 · Esc 关闭";
                 Invalidate();
@@ -376,10 +412,33 @@ namespace Pastix
                 BackColor = Color.FromArgb(40, 40, 42);
             }
 
+            // 缩略图解码缓存：key = ClipboardItem 引用。SetItems 时清空。
+            private readonly Dictionary<ClipboardItem, Image> _thumbCache =
+                new Dictionary<ClipboardItem, Image>();
+
             public int SelectedIndex => _selected;
 
             public void SetItems(List<ClipboardItem> items, bool hasNoSource, int pinnedCount, int selected)
             {
+                // 清理已不在列表中的缩略图缓存（按引用判断）
+                if (_thumbCache.Count > 0)
+                {
+                    var alive = new HashSet<ClipboardItem>();
+                    if (items != null)
+                    {
+                        foreach (var it in items)
+                            if (it.Type == ClipboardItemType.Image) alive.Add(it);
+                    }
+                    var stale = new List<ClipboardItem>();
+                    foreach (var kv in _thumbCache)
+                        if (!alive.Contains(kv.Key)) stale.Add(kv.Key);
+                    foreach (var key in stale)
+                    {
+                        _thumbCache[key]?.Dispose();
+                        _thumbCache.Remove(key);
+                    }
+                }
+
                 _items = items ?? new List<ClipboardItem>();
                 _hasNoSource = hasNoSource;
                 _pinnedCount = pinnedCount;
@@ -403,9 +462,25 @@ namespace Pastix
                 Invalidate();
             }
 
-            private int ContentHeight => _items.Count * RowHeight;
+            private int ContentHeight
+            {
+                get
+                {
+                    int h = 0;
+                    for (int i = 0; i < _items.Count; i++) h += RowHeightOf(_items[i]);
+                    return h;
+                }
+            }
             private bool IsScrollVisible => ContentHeight > Height && Height > 0;
             private int MaxScrollY => Math.Max(0, ContentHeight - Height);
+
+            /// <summary>从 0 累加得到第 idx 行的 Y 起点（相对内容坐标）。</summary>
+            private int RowTop(int idx)
+            {
+                int y = 0;
+                for (int i = 0; i < idx; i++) y += RowHeightOf(_items[i]);
+                return y;
+            }
 
             private void ClampScroll()
             {
@@ -433,8 +508,8 @@ namespace Pastix
             private void EnsureVisible(int idx)
             {
                 if (idx < 0 || !IsScrollVisible) return;
-                int top = idx * RowHeight;
-                int bottom = top + RowHeight;
+                int top = RowTop(idx);
+                int bottom = top + RowHeightOf(_items[idx]);
                 if (top < _scrollY) _scrollY = top;
                 else if (bottom > _scrollY + Height) _scrollY = bottom - Height;
                 ClampScroll();
@@ -451,7 +526,7 @@ namespace Pastix
             {
                 base.OnMouseWheel(e);
                 if (!IsScrollVisible) return;
-                _scrollY -= (e.Delta / 120) * RowHeight * 2;
+                _scrollY -= (e.Delta / 120) * RowHeightText * 2;
                 ClampScroll();
                 Invalidate();
             }
@@ -470,8 +545,16 @@ namespace Pastix
             {
                 // 滚动条 thumb 区域排除（避免在 thumb 上点中行）
                 if (IsScrollVisible && p.X >= Width - ScrollHitReserve) return -1;
-                int idx = (p.Y + _scrollY) / RowHeight;
-                return (idx < 0 || idx >= _items.Count) ? -1 : idx;
+                int target = p.Y + _scrollY;
+                if (target < 0) return -1;
+                int y = 0;
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    int h = RowHeightOf(_items[i]);
+                    if (target < y + h) return i;
+                    y += h;
+                }
+                return -1;
             }
 
             /// <summary>
@@ -489,10 +572,10 @@ namespace Pastix
             {
                 if (idx < 0 || idx >= _items.Count) return HitZone.Row;
                 int rightPad = IsScrollVisible ? ScrollHitReserve : 0;
-                int y = idx * RowHeight - _scrollY;
-                var rowRect = new Rectangle(0, y, Width - rightPad, RowHeight);
+                int rowH = RowHeightOf(_items[idx]);
+                int y = RowTop(idx) - _scrollY;
+                var rowRect = new Rectangle(0, y, Width - rightPad, rowH);
                 GetRowButtonRects(rowRect, out var pinBtn, out var delBtn);
-                // pin 按钮始终响应；delete 按钮区域命中时该行必然就是 hover 行（idx 由 IndexAt 推得）
                 if (pinBtn.Contains(p)) return HitZone.PinButton;
                 if (delBtn.Contains(p)) return HitZone.DeleteButton;
                 return HitZone.Row;
@@ -621,40 +704,54 @@ namespace Pastix
                 }
 
                 int viewTop = _scrollY;
-                int firstIdx = Math.Max(0, viewTop / RowHeight);
-                int lastIdx = Math.Min(_items.Count - 1, (viewTop + Height) / RowHeight);
+                int viewBottom = viewTop + Height;
+
+                // 找首个可见行：累加直到底超过 viewTop
+                int firstIdx = 0;
+                int firstTop = 0;
+                {
+                    int yAcc = 0;
+                    for (int i = 0; i < _items.Count; i++)
+                    {
+                        int h = RowHeightOf(_items[i]);
+                        if (yAcc + h > viewTop) { firstIdx = i; firstTop = yAcc; break; }
+                        yAcc += h;
+                        firstIdx = i + 1;
+                        firstTop = yAcc;
+                    }
+                }
 
                 using (var font = Theme.UiFont(9.5f))
                 using (var timeFont = Theme.UiFont(8.5f))
+                using (var imgInfoFont = Theme.UiFont(9f))
                 {
-                    for (int i = firstIdx; i <= lastIdx; i++)
+                    int rowTopAbs = firstTop;
+                    int sepY = -1;
+                    for (int i = firstIdx; i < _items.Count; i++)
                     {
-                        int y = i * RowHeight - viewTop;
-                        var rowRect = new Rectangle(0, y, Width - rightPad, RowHeight);
+                        if (rowTopAbs >= viewBottom) break;
+                        int rowH = RowHeightOf(_items[i]);
+                        int y = rowTopAbs - viewTop;
+                        var rowRect = new Rectangle(0, y, Width - rightPad, rowH);
 
                         bool isSelected = (i == _selected);
                         bool isHover = (i == _hover);
                         var item = _items[i];
 
-                        // 选中底色（18% accent）
                         if (isSelected)
                         {
                             using (var brush = new SolidBrush(SelectedOverlay))
                                 g.FillRectangle(brush, rowRect);
-                            // 左侧 3px 蓝色竖条
                             using (var bar = new SolidBrush(RowAccentBar))
                                 g.FillRectangle(bar, rowRect.X, rowRect.Y, AccentBarWidth, rowRect.Height);
                         }
-                        // 悬停叠加（8% 白）
                         if (isHover)
                         {
                             using (var brush = new SolidBrush(HoverOverlay))
                                 g.FillRectangle(brush, rowRect);
                         }
 
-                        // 计算右侧占位宽度（决定主文本可用宽）
-                        // 规则：pin 按钮始终占位；hover 时额外加上 delete 按钮槽位；
-                        //      已 pin 行不显示相对时间；未 pin 且未 hover 显示相对时间（位于 pin 按钮左侧）
+                        // 右侧按钮/时间布局规则与文本行一致
                         bool showDeleteBtn = isHover;
                         bool showTime = !item.Pinned && !isHover;
 
@@ -672,22 +769,27 @@ namespace Pastix
                         }
                         else
                         {
-                            // 已 pin 且未 hover：仅 pin 按钮
                             rightUsedW = RowButtonSize;
                         }
 
-                        // 主文本
-                        string preview = TruncateForRow(item.Text);
-                        var mainRect = new Rectangle(
-                            rowRect.X + LeftTextPad,
-                            rowRect.Y,
-                            Math.Max(0, rowRect.Width - LeftTextPad - RightTextPad - rightUsedW - 8),
-                            rowRect.Height);
-                        TextRenderer.DrawText(g, preview, font, mainRect, Theme.IconColorActive,
-                            TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
-                            TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                        if (item.Type == ClipboardItemType.Image)
+                        {
+                            DrawImageRow(g, rowRect, item, font, imgInfoFont, timeFont,
+                                isHover, rightUsedW, timeW);
+                        }
+                        else
+                        {
+                            string preview = TruncateForRow(item.Text);
+                            var mainRect = new Rectangle(
+                                rowRect.X + LeftTextPad,
+                                rowRect.Y,
+                                Math.Max(0, rowRect.Width - LeftTextPad - RightTextPad - rightUsedW - 8),
+                                rowRect.Height);
+                            TextRenderer.DrawText(g, preview, font, mainRect, Theme.IconColorActive,
+                                TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                                TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                        }
 
-                        // 右侧渲染：pin 按钮始终画；hover 时再画 delete；未 hover 且未 pin 时画相对时间
                         GetRowButtonRects(rowRect, out var pinBtn, out var delBtn);
                         DrawPinButton(g, pinBtn, item.Pinned, _hoverZone == HitZone.PinButton && isHover);
 
@@ -696,10 +798,9 @@ namespace Pastix
                             DrawRowButton(g, delBtn, Icons.IconKind.Trash,
                                 _hoverZone == HitZone.DeleteButton && isHover);
                         }
-                        else if (showTime)
+                        else if (showTime && item.Type == ClipboardItemType.Text)
                         {
                             string timeText = RelativeTime(item.CapturedAt);
-                            // 时间紧贴 pin 按钮左侧
                             var timeRect = new Rectangle(
                                 pinBtn.X - RowButtonGap - timeW,
                                 rowRect.Y,
@@ -709,17 +810,25 @@ namespace Pastix
                                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter |
                                 TextFormatFlags.NoPrefix);
                         }
+
+                        rowTopAbs += rowH;
+
+                        // 记录 pinned/unpinned 分隔线位置（在第 _pinnedCount 行的顶端）
+                        if (_pinnedCount > 0 && _pinnedCount < _items.Count && i + 1 == _pinnedCount)
+                            sepY = rowTopAbs - viewTop;
                     }
 
-                    // pinned 与未 pinned 之间的分组分隔线（在所有可见行之上画）
-                    if (_pinnedCount > 0 && _pinnedCount < _items.Count)
+                    // pinned/unpinned 分隔线（_pinnedCount 行可能不在可见范围；按整列累加更稳妥）
+                    if (sepY < 0 && _pinnedCount > 0 && _pinnedCount < _items.Count)
                     {
-                        int sepY = _pinnedCount * RowHeight - viewTop;
-                        if (sepY >= 0 && sepY <= Height)
-                        {
-                            using (var pen = new Pen(GroupSeparator, 1f))
-                                g.DrawLine(pen, 0, sepY, Width - rightPad, sepY);
-                        }
+                        int sepAbs = 0;
+                        for (int k = 0; k < _pinnedCount; k++) sepAbs += RowHeightOf(_items[k]);
+                        sepY = sepAbs - viewTop;
+                    }
+                    if (sepY >= 0 && sepY <= Height)
+                    {
+                        using (var pen = new Pen(GroupSeparator, 1f))
+                            g.DrawLine(pen, 0, sepY, Width - rightPad, sepY);
                     }
                 }
 
@@ -775,6 +884,115 @@ namespace Pastix
                     rect.Width - RowButtonIconInset * 2,
                     rect.Height - RowButtonIconInset * 2);
                 Icons.Draw(g, icon, iconRect, Theme.IconColor, strokeWidth: 1.6f);
+            }
+
+            // ---------------- 图片行渲染 ----------------
+
+            private const int ImageRowVPad = 12;        // 上下内边距
+            private const int ImageThumbBoxW = 88;
+            private const int ImageThumbBoxH = 56;      // 80 - 12*2 = 56
+            private const int ImageThumbLeftPad = 12;
+            private const int ImageInfoLeftPad = 12;    // 缩略图右侧到文字的间隔
+
+            /// <summary>
+            /// 解码并缓存条目的缩略图。失败返回 null。
+            /// </summary>
+            private Image GetThumbnail(ClipboardItem item)
+            {
+                if (_thumbCache.TryGetValue(item, out var cached)) return cached;
+                if (item.ThumbnailBytes == null || item.ThumbnailBytes.Length == 0) return null;
+                Image img;
+                try
+                {
+                    // Image.FromStream 要求 stream 在 Image 生命周期内保持可用，
+                    // 所以加载后立即拷贝到一个独立的 Bitmap，避免 stream dispose 后的 GDI+ 异常。
+                    using (var ms = new System.IO.MemoryStream(item.ThumbnailBytes))
+                    using (var loaded = Image.FromStream(ms))
+                    {
+                        img = new Bitmap(loaded);
+                    }
+                }
+                catch
+                {
+                    return null;
+                }
+                _thumbCache[item] = img;
+                return img;
+            }
+
+            private void DrawImageRow(
+                Graphics g, Rectangle rowRect, ClipboardItem item,
+                Font preferredFont, Font infoFont, Font timeFont,
+                bool isHover, int rightUsedW, int timeW)
+            {
+                // 缩略图区域：左 12 px、垂直居中、最大 88×56
+                int thumbX = rowRect.X + ImageThumbLeftPad;
+                int thumbY = rowRect.Y + (rowRect.Height - ImageThumbBoxH) / 2;
+                var thumbBox = new Rectangle(thumbX, thumbY, ImageThumbBoxW, ImageThumbBoxH);
+
+                var thumb = GetThumbnail(item);
+                if (thumb != null)
+                {
+                    // 等比缩放，居中绘制
+                    double scale = Math.Min(
+                        (double)ImageThumbBoxW / thumb.Width,
+                        (double)ImageThumbBoxH / thumb.Height);
+                    if (scale > 1) scale = 1;
+                    int dw = Math.Max(1, (int)(thumb.Width * scale));
+                    int dh = Math.Max(1, (int)(thumb.Height * scale));
+                    int dx = thumbBox.X + (thumbBox.Width - dw) / 2;
+                    int dy = thumbBox.Y + (thumbBox.Height - dh) / 2;
+                    var oldInterp = g.InterpolationMode;
+                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    g.DrawImage(thumb, new Rectangle(dx, dy, dw, dh));
+                    g.InterpolationMode = oldInterp;
+                }
+                else
+                {
+                    // 缩略图缺失时画占位
+                    using (var pen = new Pen(GroupSeparator, 1f))
+                        g.DrawRectangle(pen, thumbBox);
+                }
+
+                // 中间信息：图片 · 1920×1080 · 245 KB（hover/pin 状态把时间塞进去）
+                int infoLeft = thumbBox.Right + ImageInfoLeftPad;
+                int infoRight = rowRect.Right - RightTextPad - rightUsedW - 8;
+                int infoWidth = Math.Max(0, infoRight - infoLeft);
+                if (infoWidth <= 0) return;
+
+                string info = BuildImageInfo(item, includeTime: !isHover && !item.Pinned);
+                var infoRect = new Rectangle(infoLeft, rowRect.Y, infoWidth, rowRect.Height);
+                TextRenderer.DrawText(g, info, infoFont, infoRect, Theme.IconColorActive,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+
+                // 抑制 unused 警告（当前实现不直接使用 preferredFont/timeFont/timeW，但保留接口便于将来扩展）
+                _ = preferredFont; _ = timeFont; _ = timeW;
+            }
+
+            private static string BuildImageInfo(ClipboardItem item, bool includeTime)
+            {
+                int kb = ((item.ImageBytes != null ? item.ImageBytes.Length : 0) + 1023) / 1024;
+                string size = (item.ImageWidth > 0 && item.ImageHeight > 0)
+                    ? string.Format("{0}×{1}", item.ImageWidth, item.ImageHeight)
+                    : null;
+                string sizeKB = kb > 0 ? string.Format("{0} KB", kb) : null;
+
+                var parts = new System.Collections.Generic.List<string>(4) { "图片" };
+                if (size != null) parts.Add(size);
+                if (sizeKB != null) parts.Add(sizeKB);
+                if (includeTime) parts.Add(RelativeTime(item.CapturedAt));
+                return string.Join(" · ", parts);
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    foreach (var kv in _thumbCache) kv.Value?.Dispose();
+                    _thumbCache.Clear();
+                }
+                base.Dispose(disposing);
             }
 
             private static string TruncateForRow(string s)
