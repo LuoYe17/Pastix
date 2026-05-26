@@ -15,6 +15,7 @@ namespace Pastix.UI
         {
             Accent,
             Ghost,
+            Danger,
         }
 
         private const int CornerRadius = 6;
@@ -166,6 +167,13 @@ namespace Pastix.UI
                 if (_pressed) return Lighten(Theme.Accent, -0.10f);
                 if (_hover) return Lighten(Theme.Accent, 0.10f);
                 return Theme.Accent;
+            }
+            else if (Style == ButtonStyle.Danger)
+            {
+                if (!Enabled) return Color.FromArgb(120, Theme.Danger.R, Theme.Danger.G, Theme.Danger.B);
+                if (_pressed) return Lighten(Theme.Danger, -0.10f);
+                if (_hover) return Lighten(Theme.Danger, 0.10f);
+                return Theme.Danger;
             }
             else // Ghost
             {

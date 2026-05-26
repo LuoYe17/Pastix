@@ -121,5 +121,23 @@ namespace Pastix
             r.Clear();
             return r;
         }
+
+        /// <summary>
+        /// 删除磁盘上的历史文件。失败静默：用户即使关掉 Pastix 也能手动删 history.dat。
+        /// </summary>
+        public static void Delete()
+        {
+            try
+            {
+                string path = FilePath;
+                if (File.Exists(path)) File.Delete(path);
+                string tmp = path + ".tmp";
+                if (File.Exists(tmp)) File.Delete(tmp);
+            }
+            catch
+            {
+                // 文件被占用或权限不足时安静放弃
+            }
+        }
     }
 }

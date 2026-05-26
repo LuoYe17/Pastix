@@ -11,8 +11,10 @@ namespace Pastix
     /// </summary>
     internal sealed class ClipboardWatcher : IDisposable
     {
-        private const int MaxItems = 100;
         private const int SaveDebounceMs = 200;
+
+        /// <summary>历史保留的最大条数。外部修改后可调用 <see cref="Trim"/> 立即裁剪。</summary>
+        public int MaxItems { get; set; } = 100;
 
         private readonly IntPtr _hwnd;
         private readonly LinkedList<ClipboardItem> _items = new LinkedList<ClipboardItem>();
@@ -59,6 +61,38 @@ namespace Pastix
             int i = 0;
             foreach (var item in _items) arr[i++] = item;
             return arr;
+        }
+
+        /// <summary>
+        /// 裁剪到当前 <see cref="MaxItems"/>。多余条目从尾部丢弃，
+        /// 仅在确实丢弃时调度一次落盘（沿用现有防抖语义，不另开通道）。
+        /// </summary>
+        public void Trim()
+        {
+            bool changed = false;
+            while (_items.Count > MaxItems)
+            {
+                _items.RemoveLast();
+                changed = true;
+            }
+            if (changed)
+            {
+                ScheduleSave();
+                Changed?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// 清空全部历史并立刻删除磁盘文件，用于设置面板的"清空所有历史"按钮。
+        /// </summary>
+        public void ClearAll()
+        {
+            _items.Clear();
+            _lastSeen = null;
+            // 取消任何挂起的保存，避免 Trim 后又把空集合写回
+            _saveTimer?.Stop();
+            HistoryStore.Delete();
+            Changed?.Invoke();
         }
 
         private void TryCaptureCurrent()

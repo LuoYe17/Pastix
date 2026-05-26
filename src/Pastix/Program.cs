@@ -57,9 +57,11 @@ namespace Pastix
         private const int PasteDelayMs = 80;
 
         private NotifyIcon _trayIcon;
+        private ToolStripMenuItem _showHistoryMenuItem;
         private HotkeyManager _hotkeyManager;
         private ClipboardWatcher _clipboard;
         private HistoryWindow _window;
+        private Settings _settings;
         private string _hotkeyLabel = "Ctrl+Shift+V";
         private string _pendingPaste;
         private System.Windows.Forms.Timer _pasteTimer;
@@ -78,31 +80,43 @@ namespace Pastix
             base.OnLoad(e);
             Visible = false;
 
+            _settings = Settings.Load();
+
             InitTray();
 
-            _clipboard = new ClipboardWatcher(Handle);
+            _clipboard = new ClipboardWatcher(Handle) { MaxItems = _settings.MaxHistoryItems };
             _clipboard.Start();
+            // 启动时若磁盘恢复出来的条目已超过新上限，立即裁剪
+            _clipboard.Trim();
 
             _hotkeyManager = new HotkeyManager(Handle);
-            RegisterHotkey();
+            RegisterConfiguredHotkey();
 
             _pasteTimer = new System.Windows.Forms.Timer { Interval = PasteDelayMs };
             _pasteTimer.Tick += OnPasteTick;
 
-            BeginInvoke(new Action(() =>
+            // 仅首次启动弹欢迎引导，避免每次重启打扰
+            if (!_settings.FirstRunCompleted)
             {
-                MessageBox.Show(
-                    $"Pastix 已驻留在系统托盘。\n\n按 {_hotkeyLabel} 打开剪贴板历史。\n右键托盘图标可以退出。",
-                    "Pastix",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-            }));
+                _settings.FirstRunCompleted = true;
+                _settings.Save();
+                BeginInvoke(new Action(() =>
+                {
+                    MessageBox.Show(
+                        $"Pastix 已驻留在系统托盘。\n\n按 {_hotkeyLabel} 打开剪贴板历史。\n右键托盘图标可以退出。",
+                        "Pastix",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }));
+            }
         }
 
         private void InitTray()
         {
             var menu = new ContextMenuStrip();
-            menu.Items.Add("显示历史", null, (s, e) => ShowHistory());
+            _showHistoryMenuItem = new ToolStripMenuItem("显示历史", null, (s, e) => ShowHistory());
+            menu.Items.Add(_showHistoryMenuItem);
+            menu.Items.Add("设置…", null, (s, e) => ShowSettings());
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("退出", null, (s, e) => ExitApp());
 
@@ -116,19 +130,49 @@ namespace Pastix
             _trayIcon.DoubleClick += (s, e) => ShowHistory();
         }
 
-        private void RegisterHotkey()
+        /// <summary>
+        /// 用 _settings 中的热键注册全局热键。默认值（Ctrl+Shift+V）注册失败时
+        /// 降级到 Win+Shift+V，对应原版本的兜底体验。
+        /// </summary>
+        private void RegisterConfiguredHotkey()
         {
-            if (_hotkeyManager.Register(Keys.V, HotkeyManager.MOD_CONTROL | HotkeyManager.MOD_SHIFT))
+            bool isDefault =
+                _settings.HotkeyKey == (int)Keys.V &&
+                (uint)_settings.HotkeyModifiers == (HotkeyManager.MOD_CONTROL | HotkeyManager.MOD_SHIFT);
+
+            if (_hotkeyManager.Register((Keys)_settings.HotkeyKey, (uint)_settings.HotkeyModifiers))
             {
-                _hotkeyLabel = "Ctrl+Shift+V";
+                _hotkeyLabel = HotkeyManager.Format((Keys)_settings.HotkeyKey, (uint)_settings.HotkeyModifiers);
             }
-            else if (_hotkeyManager.Register(Keys.V, MOD_WIN | HotkeyManager.MOD_SHIFT))
+            else if (isDefault && _hotkeyManager.Register(Keys.V, MOD_WIN | HotkeyManager.MOD_SHIFT))
             {
                 _hotkeyLabel = "Win+Shift+V";
             }
             else
             {
                 _hotkeyLabel = "(热键被占用)";
+            }
+
+            if (_showHistoryMenuItem != null)
+                _showHistoryMenuItem.Text = $"显示历史 ({_hotkeyLabel})";
+        }
+
+        private void ShowSettings()
+        {
+            using (var form = new SettingsForm(_settings, _hotkeyManager, _clipboard))
+            {
+                form.ShowDialog();
+            }
+
+            // 外部契约：无论用户按 OK / Cancel / 直接关，都重新加载一次配置并同步运行时状态。
+            // 这样 SettingsForm 内部不必把"成功状态"通知出来，主程序只关心磁盘是真相。
+            _settings = Settings.Load();
+            RegisterConfiguredHotkey();
+
+            if (_clipboard != null)
+            {
+                _clipboard.MaxItems = _settings.MaxHistoryItems;
+                _clipboard.Trim();
             }
         }
 
