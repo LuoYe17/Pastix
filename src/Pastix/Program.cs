@@ -202,10 +202,44 @@ namespace Pastix
             _window = new HistoryWindow();
             _window.ItemChosen += OnItemChosen;
             _window.Cancelled += OnCancelled;
-            _window.FormClosed += (s, e) => { if (ReferenceEquals(_window, s)) _window = null; };
+            _window.ItemPinToggleRequested += OnItemPinToggleRequested;
+            _window.ItemRemoveRequested += OnItemRemoveRequested;
+            _window.FormClosed += (s, e) =>
+            {
+                if (ReferenceEquals(_window, s))
+                {
+                    _clipboard.Changed -= OnClipboardChanged;
+                    _window = null;
+                }
+            };
+
+            // 订阅历史变更：浮窗可见期间内任何 pin/remove 都立即刷新
+            _clipboard.Changed += OnClipboardChanged;
 
             NativeMethods.GetCursorPos(out var pt);
             _window.ShowWith(_clipboard.Snapshot(), new Point(pt.X, pt.Y));
+        }
+
+        private void OnItemPinToggleRequested(ClipboardItem item)
+        {
+            _clipboard?.TogglePin(item);
+        }
+
+        private void OnItemRemoveRequested(ClipboardItem item)
+        {
+            _clipboard?.RemoveItem(item);
+        }
+
+        private void OnClipboardChanged()
+        {
+            // Changed 可能由后台剪贴板变化触发；仅在浮窗可见时刷新视图
+            if (_window != null && !_window.IsDisposed && _window.Visible)
+            {
+                if (_window.InvokeRequired)
+                    _window.BeginInvoke(new Action(() => _window.RefreshItems(_clipboard.Snapshot())));
+                else
+                    _window.RefreshItems(_clipboard.Snapshot());
+            }
         }
 
         private void OnItemChosen(string text)

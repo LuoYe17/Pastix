@@ -9,13 +9,16 @@ namespace Pastix
 {
     /// <summary>
     /// 把剪贴板历史以 DPAPI 加密形式持久化到 exe 同目录的 history.dat。
-    /// 文件格式（v0x0001）：'P''S''T''X' + 版本(BE u16) + 条数(LE i32) + 条目*
-    ///   每条：CapturedAt.Ticks(LE i64) + payloadLen(LE i32) + DPAPI(UTF8 文本)
+    /// 文件头：'P''S''T''X' + 版本(BE u16) + 条数(LE i32) + 条目*
+    ///   v1 (0x0001) 每条：CapturedAt.Ticks(LE i64) + payloadLen(LE i32) + DPAPI(UTF8)
+    ///   v2 (0x0002) 每条：CapturedAt.Ticks(LE i64) + Pinned(u8 0/1) + payloadLen(LE i32) + DPAPI(UTF8)
+    /// Load 兼容 v1 / v2，Save 永远写 v2。
     /// 所有失败均静默：load 失败返回空列表且不删源文件，save 失败下次再写。
     /// </summary>
     internal static class HistoryStore
     {
-        private const ushort Version = 0x0001;
+        private const ushort VersionV1 = 0x0001;
+        private const ushort VersionV2 = 0x0002;
         private const int MaxItems = 10_000;             // 防御性上限，避免坏文件触发巨量分配
         private const int MaxPayloadBytes = 16 * 1024 * 1024;
 
@@ -47,7 +50,8 @@ namespace Pastix
                     int hi = br.ReadByte();
                     int lo = br.ReadByte();
                     int ver = (hi << 8) | lo;
-                    if (ver != Version) return Empty(result);
+                    bool v2 = ver == VersionV2;
+                    if (ver != VersionV1 && !v2) return Empty(result);
 
                     int count = br.ReadInt32();
                     if (count < 0 || count > MaxItems) return Empty(result);
@@ -55,6 +59,12 @@ namespace Pastix
                     for (int i = 0; i < count; i++)
                     {
                         long ticks = br.ReadInt64();
+                        bool pinned = false;
+                        if (v2)
+                        {
+                            byte pin = br.ReadByte();
+                            pinned = pin != 0;
+                        }
                         int payloadLen = br.ReadInt32();
                         if (payloadLen < 0 || payloadLen > MaxPayloadBytes) return Empty(result);
 
@@ -65,7 +75,7 @@ namespace Pastix
                         string text = Encoding.UTF8.GetString(plain);
                         if (ticks < DateTime.MinValue.Ticks || ticks > DateTime.MaxValue.Ticks)
                             return Empty(result);
-                        result.Add(new ClipboardItem(text, new DateTime(ticks)));
+                        result.Add(new ClipboardItem(text, new DateTime(ticks), pinned));
                     }
                 }
                 return result;
@@ -89,14 +99,15 @@ namespace Pastix
                     bw.Write((byte)'S');
                     bw.Write((byte)'T');
                     bw.Write((byte)'X');
-                    bw.Write((byte)((Version >> 8) & 0xFF));
-                    bw.Write((byte)(Version & 0xFF));
+                    bw.Write((byte)((VersionV2 >> 8) & 0xFF));
+                    bw.Write((byte)(VersionV2 & 0xFF));
                     bw.Write(items.Count);
 
                     for (int i = 0; i < items.Count; i++)
                     {
                         var it = items[i];
                         bw.Write(it.CapturedAt.Ticks);
+                        bw.Write(it.Pinned ? (byte)1 : (byte)0);
                         byte[] plain = Encoding.UTF8.GetBytes(it.Text ?? string.Empty);
                         byte[] payload = ProtectedData.Protect(plain, null, DataProtectionScope.CurrentUser);
                         bw.Write(payload.Length);

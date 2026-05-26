@@ -22,6 +22,9 @@ namespace Pastix.UI
             Undo,
             Redo,
             Search,
+            Pin,
+            PinFilled,
+            Trash,
         }
 
         /// <summary>所有图标基于 24×24 网格设计，绘制时按 bounds 等比缩放。</summary>
@@ -63,6 +66,9 @@ namespace Pastix.UI
                         case IconKind.Undo: DrawUndo(g, pen); break;
                         case IconKind.Redo: DrawRedo(g, pen); break;
                         case IconKind.Search: DrawSearch(g, pen); break;
+                        case IconKind.Pin: DrawPin(g, pen, brush, fill: false); break;
+                        case IconKind.PinFilled: DrawPin(g, pen, brush, fill: true); break;
+                        case IconKind.Trash: DrawTrash(g, pen); break;
                     }
                 }
             }
@@ -178,6 +184,43 @@ namespace Pastix.UI
             // lucide search：圆 + 右下斜线
             g.DrawEllipse(pen, 4f, 4f, 12f, 12f);
             g.DrawLine(pen, 14.5f, 14.5f, 20f, 20f);
+        }
+
+        private static void DrawPin(Graphics g, Pen pen, SolidBrush brush, bool fill)
+        {
+            // 直立图钉：圆头 + 两侧小翼（卡圈）+ 向下针尖
+            // 圆头：圆心 (12, 8)、半径 3.5
+            // 卡圈：(7, 12) → (17, 12) 水平短线
+            // 针：(12, 12) → (12, 20)
+            const float headCx = 12f;
+            const float headCy = 8f;
+            const float headR = 3.5f;
+
+            if (fill)
+            {
+                g.FillEllipse(brush, headCx - headR, headCy - headR, headR * 2, headR * 2);
+            }
+            g.DrawEllipse(pen, headCx - headR, headCy - headR, headR * 2, headR * 2);
+            g.DrawLine(pen, 7f, 12f, 17f, 12f);
+            g.DrawLine(pen, 12f, 12f, 12f, 20f);
+        }
+
+        private static void DrawTrash(Graphics g, Pen pen)
+        {
+            // lucide trash-2 简化版
+            // 盖子横线
+            g.DrawLine(pen, 4f, 7f, 20f, 7f);
+            // 顶部把手 U
+            g.DrawLine(pen, 9f, 7f, 9f, 4f);
+            g.DrawLine(pen, 9f, 4f, 15f, 4f);
+            g.DrawLine(pen, 15f, 4f, 15f, 7f);
+            // 桶身（梯形微收）
+            g.DrawLine(pen, 6.5f, 7f, 7.5f, 20f);
+            g.DrawLine(pen, 17.5f, 7f, 16.5f, 20f);
+            g.DrawLine(pen, 7.5f, 20f, 16.5f, 20f);
+            // 内部两条短竖线
+            g.DrawLine(pen, 10f, 11f, 10f, 17f);
+            g.DrawLine(pen, 14f, 11f, 14f, 17f);
         }
 
         // ----------------------------------------------------------------
