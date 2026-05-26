@@ -41,10 +41,6 @@ dotnet build src/Pastix/Pastix.csproj -c Release
 
 产物在 `src/Pastix/bin/Release/net48/Pastix.exe`。
 
-## 状态
-
-v0.2 持久化已就位，朝 v1.0 打磨中。
-
 ## 交流 / Bug 反馈
 
 - Bug 和功能建议请提 [Issue](https://github.com/LuoYe17/Pastix/issues)，方便公开追踪
