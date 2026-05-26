@@ -109,6 +109,45 @@ namespace Pastix
                         MessageBoxIcon.Information);
                 }));
             }
+
+            // 启动计数 +1（用于第二次启动时引导开机自启）
+            _settings.LaunchCount++;
+            _settings.Save();
+
+            // 第 2 次及之后的启动时引导（且尚未开自启 + 尚未"不再询问"）
+            // 用 >=2：用户选"稍后"（No）后下次启动还会满足触发条件
+            if (_settings.LaunchCount >= 2 && !_settings.AutoStart && !_settings.AutoStartPromptShown)
+            {
+                BeginInvoke(new Action(ShowAutoStartPrompt));
+            }
+        }
+
+        private void ShowAutoStartPrompt()
+        {
+            var result = MessageBox.Show(
+                "Pastix 需要在后台运行才能记录你复制的内容。\n\n" +
+                "建议开启 Windows 启动时自动运行。",
+                "Pastix",
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button1);
+
+            if (result == DialogResult.Yes)
+            {
+                // 现在开
+                _settings.AutoStart = true;
+                _settings.AutoStartPromptShown = true;
+                _settings.Save();
+                SettingsForm.ApplyAutoStart(true);
+                Toast.Show("已开启开机自启");
+            }
+            else if (result == DialogResult.Cancel)
+            {
+                // 不再询问
+                _settings.AutoStartPromptShown = true;
+                _settings.Save();
+            }
+            // No 是"稍后"：什么都不做，下次启动还会满足触发条件
         }
 
         private void InitTray()

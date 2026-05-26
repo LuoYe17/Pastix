@@ -469,7 +469,7 @@ namespace Pastix
             this.Close();
         }
 
-        private static void ApplyAutoStart(bool enable)
+        internal static void ApplyAutoStart(bool enable)
         {
             try
             {

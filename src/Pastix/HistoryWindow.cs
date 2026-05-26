@@ -333,18 +333,28 @@ namespace Pastix
             private static readonly Color EmptyTextColor = Color.FromArgb(140, 255, 255, 255);
             private static readonly Color GroupSeparator = Color.FromArgb(40, 255, 255, 255);
             private static readonly Color RowButtonHover = Color.FromArgb(45, 255, 255, 255);
+            // 自绘滚动条颜色（白色不同 alpha）
+            private static readonly Color ScrollThumbIdle = Color.FromArgb(60, 255, 255, 255);
+            private static readonly Color ScrollThumbHover = Color.FromArgb(140, 255, 255, 255);
+            private static readonly Color ScrollThumbDrag = Color.FromArgb(200, 255, 255, 255);
             private const int LeftTextPad = 12;
             private const int RightTextPad = 12;
             private const int AccentBarWidth = 3;
             private const int TimeMaxWidth = 80;
-            private const int RowButtonSize = 28;
+            private const int RowButtonSize = 30;
             private const int RowButtonGap = 2;
-            private const int PinIndicatorSize = 16;
+            private const int RowButtonIconInset = 5; // 30 - 5*2 = 20px 图标
+            // 滚动条几何
+            private const int ScrollThinWidth = 3;
+            private const int ScrollThickWidth = 8;
+            private const int ScrollRightPad = 2;
+            private const int ScrollMinThumbHeight = 20;
+            // 命中测试时排除 thumb 区域（避免在 thumb 上点中行）
+            private const int ScrollHitReserve = ScrollThickWidth + ScrollRightPad;
 
             // 行内子区域（命中测试用）
             private enum HitZone { Row, PinButton, DeleteButton }
 
-            private readonly VScrollBar _scroll;
             private List<ClipboardItem> _items = new List<ClipboardItem>();
             private int _selected = -1;
             private int _hover = -1;
@@ -352,15 +362,18 @@ namespace Pastix
             private bool _hasNoSource;
             private int _pinnedCount;
 
+            // 自绘滚动条状态
+            private int _scrollY;
+            private bool _isPanelHovered;
+            private bool _isDraggingScroll;
+            private int _scrollDragStartY;
+            private int _scrollDragStartScrollY;
+
             public ListPanel()
             {
                 SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
                 BackColor = Color.FromArgb(40, 40, 42);
-
-                _scroll = new VScrollBar { Dock = DockStyle.Right, Width = 12, Visible = false };
-                _scroll.Scroll += (s, e) => Invalidate();
-                Controls.Add(_scroll);
             }
 
             public int SelectedIndex => _selected;
@@ -374,7 +387,8 @@ namespace Pastix
                     : Math.Max(0, Math.Min(_items.Count - 1, selected));
                 _hover = -1;
                 _hoverZone = HitZone.Row;
-                UpdateScroll();
+                _isDraggingScroll = false;
+                ClampScroll();
                 EnsureVisible(_selected);
                 Invalidate();
             }
@@ -389,109 +403,172 @@ namespace Pastix
                 Invalidate();
             }
 
-            private void UpdateScroll()
+            private int ContentHeight => _items.Count * RowHeight;
+            private bool IsScrollVisible => ContentHeight > Height && Height > 0;
+            private int MaxScrollY => Math.Max(0, ContentHeight - Height);
+
+            private void ClampScroll()
             {
-                int contentH = _items.Count * RowHeight;
-                if (contentH > Height)
-                {
-                    _scroll.Visible = true;
-                    _scroll.Minimum = 0;
-                    _scroll.Maximum = contentH;
-                    _scroll.LargeChange = Math.Max(1, Height);
-                    _scroll.SmallChange = RowHeight;
-                    if (_scroll.Value > contentH - Height) _scroll.Value = Math.Max(0, contentH - Height);
-                }
-                else
-                {
-                    _scroll.Visible = false;
-                    _scroll.Value = 0;
-                }
+                int max = MaxScrollY;
+                if (_scrollY < 0) _scrollY = 0;
+                else if (_scrollY > max) _scrollY = max;
+            }
+
+            /// <summary>
+            /// 计算 thumb 矩形（坐标在 ListPanel 内）。仅在 IsScrollVisible 时有效。
+            /// </summary>
+            private Rectangle GetThumbRect()
+            {
+                int width = _isPanelHovered || _isDraggingScroll ? ScrollThickWidth : ScrollThinWidth;
+                int contentH = ContentHeight;
+                int thumbH = Math.Max(ScrollMinThumbHeight, (int)((long)Height * Height / contentH));
+                if (thumbH > Height) thumbH = Height;
+                int max = MaxScrollY;
+                int travel = Height - thumbH;
+                int thumbY = max <= 0 ? 0 : (int)((long)_scrollY * travel / max);
+                int x = Width - width - ScrollRightPad;
+                return new Rectangle(x, thumbY, width, thumbH);
             }
 
             private void EnsureVisible(int idx)
             {
-                if (idx < 0 || !_scroll.Visible) return;
+                if (idx < 0 || !IsScrollVisible) return;
                 int top = idx * RowHeight;
                 int bottom = top + RowHeight;
-                if (top < _scroll.Value)
-                    _scroll.Value = Math.Max(0, top);
-                else if (bottom > _scroll.Value + Height)
-                    _scroll.Value = Math.Min(_scroll.Maximum - _scroll.LargeChange + 1, bottom - Height);
+                if (top < _scrollY) _scrollY = top;
+                else if (bottom > _scrollY + Height) _scrollY = bottom - Height;
+                ClampScroll();
             }
 
             protected override void OnSizeChanged(EventArgs e)
             {
                 base.OnSizeChanged(e);
-                UpdateScroll();
+                ClampScroll();
                 Invalidate();
             }
 
             protected override void OnMouseWheel(MouseEventArgs e)
             {
                 base.OnMouseWheel(e);
-                if (!_scroll.Visible) return;
-                int max = Math.Max(0, _scroll.Maximum - _scroll.LargeChange + 1);
-                int v = _scroll.Value - (e.Delta / 120) * RowHeight * 2;
-                _scroll.Value = Math.Max(0, Math.Min(max, v));
+                if (!IsScrollVisible) return;
+                _scrollY -= (e.Delta / 120) * RowHeight * 2;
+                ClampScroll();
                 Invalidate();
+            }
+
+            protected override void OnMouseEnter(EventArgs e)
+            {
+                base.OnMouseEnter(e);
+                if (!_isPanelHovered)
+                {
+                    _isPanelHovered = true;
+                    Invalidate();
+                }
             }
 
             private int IndexAt(Point p)
             {
-                if (_scroll.Visible && p.X >= Width - _scroll.Width) return -1;
-                int idx = (p.Y + _scroll.Value) / RowHeight;
+                // 滚动条 thumb 区域排除（避免在 thumb 上点中行）
+                if (IsScrollVisible && p.X >= Width - ScrollHitReserve) return -1;
+                int idx = (p.Y + _scrollY) / RowHeight;
                 return (idx < 0 || idx >= _items.Count) ? -1 : idx;
             }
 
             /// <summary>
-            /// 计算未 pin 行 hover 时的两个按钮区域。返回值是按钮的 (pinRect, deleteRect)。
-            /// 未 hover 或 pinned 行返回 Rectangle.Empty。
+            /// 计算行内按钮区域。pin 按钮始终存在；delete 按钮仅 hover 时显示。
             /// </summary>
             private void GetRowButtonRects(Rectangle rowRect, out Rectangle pinBtn, out Rectangle deleteBtn)
             {
                 int yMid = rowRect.Y + (rowRect.Height - RowButtonSize) / 2;
                 int rightEdge = rowRect.Right - RightTextPad;
-                deleteBtn = new Rectangle(rightEdge - RowButtonSize, yMid, RowButtonSize, RowButtonSize);
-                pinBtn = new Rectangle(deleteBtn.X - RowButtonGap - RowButtonSize, yMid, RowButtonSize, RowButtonSize);
+                pinBtn = new Rectangle(rightEdge - RowButtonSize, yMid, RowButtonSize, RowButtonSize);
+                deleteBtn = new Rectangle(pinBtn.X - RowButtonGap - RowButtonSize, yMid, RowButtonSize, RowButtonSize);
             }
 
             private HitZone ZoneAt(int idx, Point p)
             {
                 if (idx < 0 || idx >= _items.Count) return HitZone.Row;
-                if (_items[idx].Pinned) return HitZone.Row; // pinned 行不显示按钮
-                int rightPad = _scroll.Visible ? _scroll.Width : 0;
-                int y = idx * RowHeight - _scroll.Value;
+                int rightPad = IsScrollVisible ? ScrollHitReserve : 0;
+                int y = idx * RowHeight - _scrollY;
                 var rowRect = new Rectangle(0, y, Width - rightPad, RowHeight);
                 GetRowButtonRects(rowRect, out var pinBtn, out var delBtn);
+                // pin 按钮始终响应；delete 按钮区域命中时该行必然就是 hover 行（idx 由 IndexAt 推得）
                 if (pinBtn.Contains(p)) return HitZone.PinButton;
                 if (delBtn.Contains(p)) return HitZone.DeleteButton;
                 return HitZone.Row;
             }
 
+            private bool IsOverThumb(Point p)
+            {
+                if (!IsScrollVisible) return false;
+                return GetThumbRect().Contains(p);
+            }
+
             protected override void OnMouseMove(MouseEventArgs e)
             {
                 base.OnMouseMove(e);
+
+                // 拖动 thumb 中：根据鼠标 Y 偏移更新 scrollY
+                if (_isDraggingScroll)
+                {
+                    int thumbH = GetThumbRect().Height;
+                    int travel = Math.Max(1, Height - thumbH);
+                    int max = MaxScrollY;
+                    int dy = e.Y - _scrollDragStartY;
+                    long newScroll = (long)_scrollDragStartScrollY + (long)dy * max / travel;
+                    _scrollY = (int)Math.Max(0, Math.Min(max, newScroll));
+                    Invalidate();
+                    return;
+                }
+
                 int h = IndexAt(e.Location);
                 var z = ZoneAt(h, e.Location);
+                bool overThumb = IsOverThumb(e.Location);
                 if (h != _hover || z != _hoverZone)
                 {
                     _hover = h;
                     _hoverZone = z;
-                    // 在按钮区显示手型，提示可点击
-                    Cursor = (z == HitZone.PinButton || z == HitZone.DeleteButton)
-                        ? Cursors.Hand : Cursors.Default;
                     Invalidate();
                 }
+                // 在按钮区或 thumb 上显示手型
+                Cursor = (z == HitZone.PinButton || z == HitZone.DeleteButton || overThumb)
+                    ? Cursors.Hand : Cursors.Default;
             }
 
             protected override void OnMouseLeave(EventArgs e)
             {
                 base.OnMouseLeave(e);
+                _isPanelHovered = false;
                 if (_hover != -1 || _hoverZone != HitZone.Row)
                 {
                     _hover = -1;
                     _hoverZone = HitZone.Row;
-                    Cursor = Cursors.Default;
+                }
+                Cursor = Cursors.Default;
+                Invalidate();
+            }
+
+            protected override void OnMouseDown(MouseEventArgs e)
+            {
+                base.OnMouseDown(e);
+                if (e.Button != MouseButtons.Left) return;
+                if (IsOverThumb(e.Location))
+                {
+                    _isDraggingScroll = true;
+                    _scrollDragStartY = e.Y;
+                    _scrollDragStartScrollY = _scrollY;
+                    Capture = true;
+                    Invalidate();
+                }
+            }
+
+            protected override void OnMouseUp(MouseEventArgs e)
+            {
+                base.OnMouseUp(e);
+                if (_isDraggingScroll)
+                {
+                    _isDraggingScroll = false;
+                    Capture = false;
                     Invalidate();
                 }
             }
@@ -499,6 +576,8 @@ namespace Pastix
             protected override void OnMouseClick(MouseEventArgs e)
             {
                 base.OnMouseClick(e);
+                // 滚动条拖动结束时 OnMouseUp 已处理；点击 thumb 不触发列表行
+                if (IsOverThumb(e.Location)) return;
                 int idx = IndexAt(e.Location);
                 if (idx < 0) return;
                 _selected = idx;
@@ -525,7 +604,8 @@ namespace Pastix
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
-                int rightPad = _scroll.Visible ? _scroll.Width : 0;
+                // 自绘滚动条不占据布局空间，但命中测试预留 ScrollHitReserve 防止 thumb 上误点
+                int rightPad = IsScrollVisible ? ScrollHitReserve : 0;
 
                 if (_items.Count == 0)
                 {
@@ -540,7 +620,7 @@ namespace Pastix
                     return;
                 }
 
-                int viewTop = _scroll.Value;
+                int viewTop = _scrollY;
                 int firstIdx = Math.Max(0, viewTop / RowHeight);
                 int lastIdx = Math.Min(_items.Count - 1, (viewTop + Height) / RowHeight);
 
@@ -573,21 +653,27 @@ namespace Pastix
                         }
 
                         // 计算右侧占位宽度（决定主文本可用宽）
-                        bool showRowButtons = isHover && !item.Pinned;
+                        // 规则：pin 按钮始终占位；hover 时额外加上 delete 按钮槽位；
+                        //      已 pin 行不显示相对时间；未 pin 且未 hover 显示相对时间（位于 pin 按钮左侧）
+                        bool showDeleteBtn = isHover;
+                        bool showTime = !item.Pinned && !isHover;
+
                         int rightUsedW;
-                        if (item.Pinned)
-                        {
-                            rightUsedW = PinIndicatorSize; // 实心图钉指示
-                        }
-                        else if (showRowButtons)
+                        int timeW = 0;
+                        if (showDeleteBtn)
                         {
                             rightUsedW = RowButtonSize * 2 + RowButtonGap;
                         }
+                        else if (showTime)
+                        {
+                            timeW = TextRenderer.MeasureText(RelativeTime(item.CapturedAt), timeFont).Width;
+                            if (timeW > TimeMaxWidth) timeW = TimeMaxWidth;
+                            rightUsedW = RowButtonSize + RowButtonGap + timeW;
+                        }
                         else
                         {
-                            int timeW = TextRenderer.MeasureText(RelativeTime(item.CapturedAt), timeFont).Width;
-                            if (timeW > TimeMaxWidth) timeW = TimeMaxWidth;
-                            rightUsedW = timeW;
+                            // 已 pin 且未 hover：仅 pin 按钮
+                            rightUsedW = RowButtonSize;
                         }
 
                         // 主文本
@@ -601,30 +687,21 @@ namespace Pastix
                             TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
                             TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
 
-                        // 右侧渲染：pinned 指示 / 行按钮 / 时间
-                        if (item.Pinned)
+                        // 右侧渲染：pin 按钮始终画；hover 时再画 delete；未 hover 且未 pin 时画相对时间
+                        GetRowButtonRects(rowRect, out var pinBtn, out var delBtn);
+                        DrawPinButton(g, pinBtn, item.Pinned, _hoverZone == HitZone.PinButton && isHover);
+
+                        if (showDeleteBtn)
                         {
-                            int iy = rowRect.Y + (rowRect.Height - PinIndicatorSize) / 2;
-                            int ix = rowRect.Right - RightTextPad - PinIndicatorSize;
-                            Icons.Draw(g, Icons.IconKind.PinFilled,
-                                new RectangleF(ix, iy, PinIndicatorSize, PinIndicatorSize),
-                                Theme.Accent, strokeWidth: 1.6f);
-                        }
-                        else if (showRowButtons)
-                        {
-                            GetRowButtonRects(rowRect, out var pinBtn, out var delBtn);
-                            DrawRowButton(g, pinBtn, Icons.IconKind.Pin,
-                                _hoverZone == HitZone.PinButton);
                             DrawRowButton(g, delBtn, Icons.IconKind.Trash,
-                                _hoverZone == HitZone.DeleteButton);
+                                _hoverZone == HitZone.DeleteButton && isHover);
                         }
-                        else
+                        else if (showTime)
                         {
                             string timeText = RelativeTime(item.CapturedAt);
-                            int timeW = TextRenderer.MeasureText(timeText, timeFont).Width;
-                            if (timeW > TimeMaxWidth) timeW = TimeMaxWidth;
+                            // 时间紧贴 pin 按钮左侧
                             var timeRect = new Rectangle(
-                                rowRect.Right - RightTextPad - timeW,
+                                pinBtn.X - RowButtonGap - timeW,
                                 rowRect.Y,
                                 timeW,
                                 rowRect.Height);
@@ -645,6 +722,42 @@ namespace Pastix
                         }
                     }
                 }
+
+                // 自绘极细滚动条（在所有内容之上）
+                if (IsScrollVisible)
+                {
+                    Color thumbColor = _isDraggingScroll
+                        ? ScrollThumbDrag
+                        : (_isPanelHovered ? ScrollThumbHover : ScrollThumbIdle);
+                    var thumb = GetThumbRect();
+                    using (var brush = new SolidBrush(thumbColor))
+                    using (var path = GraphicsHelpers.RoundRect(thumb, thumb.Width / 2f))
+                        g.FillPath(brush, path);
+                }
+            }
+
+            private static void DrawPinButton(Graphics g, Rectangle rect, bool pinned, bool hovered)
+            {
+                if (hovered)
+                {
+                    using (var path = GraphicsHelpers.RoundRect(rect, 6))
+                    using (var brush = new SolidBrush(RowButtonHover))
+                        g.FillPath(brush, path);
+                }
+                // 30×30 容器内缩 5px → 20×20 图标
+                var iconRect = new RectangleF(
+                    rect.X + RowButtonIconInset,
+                    rect.Y + RowButtonIconInset,
+                    rect.Width - RowButtonIconInset * 2,
+                    rect.Height - RowButtonIconInset * 2);
+                if (pinned)
+                {
+                    Icons.Draw(g, Icons.IconKind.PinFilled, iconRect, Theme.Accent, strokeWidth: 1.6f);
+                }
+                else
+                {
+                    Icons.Draw(g, Icons.IconKind.Pin, iconRect, Theme.IconColor, strokeWidth: 1.6f);
+                }
             }
 
             private static void DrawRowButton(Graphics g, Rectangle rect, Icons.IconKind icon, bool hovered)
@@ -655,8 +768,12 @@ namespace Pastix
                     using (var brush = new SolidBrush(RowButtonHover))
                         g.FillPath(brush, path);
                 }
-                // 图标内缩 6px，在 28×28 中得到 16×16 视觉
-                var iconRect = new RectangleF(rect.X + 6, rect.Y + 6, rect.Width - 12, rect.Height - 12);
+                // 30×30 容器内缩 5px → 20×20 图标
+                var iconRect = new RectangleF(
+                    rect.X + RowButtonIconInset,
+                    rect.Y + RowButtonIconInset,
+                    rect.Width - RowButtonIconInset * 2,
+                    rect.Height - RowButtonIconInset * 2);
                 Icons.Draw(g, icon, iconRect, Theme.IconColor, strokeWidth: 1.6f);
             }
 

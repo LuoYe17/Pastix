@@ -23,6 +23,8 @@ namespace Pastix
         public int HotkeyModifiers { get; set; } = (int)(HotkeyManager.MOD_CONTROL | HotkeyManager.MOD_SHIFT);
         public int MaxHistoryItems { get; set; } = DefaultHistoryItems;
         public bool AutoStart { get; set; } = false;
+        public int LaunchCount { get; set; } = 0;
+        public bool AutoStartPromptShown { get; set; } = false;
 
         public static string ConfigPath
         {
@@ -71,6 +73,12 @@ namespace Pastix
                         case "AutoStart":
                             s.AutoStart = string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
                             break;
+                        case "LaunchCount":
+                            if (int.TryParse(value, out int lc) && lc >= 0) s.LaunchCount = lc;
+                            break;
+                        case "AutoStartPromptShown":
+                            s.AutoStartPromptShown = string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+                            break;
                     }
                 }
             }
@@ -93,6 +101,8 @@ namespace Pastix
                 sb.AppendLine("HotkeyModifiers=" + HotkeyModifiers);
                 sb.AppendLine("MaxHistoryItems=" + MaxHistoryItems);
                 sb.AppendLine("AutoStart=" + (AutoStart ? "true" : "false"));
+                sb.AppendLine("LaunchCount=" + LaunchCount);
+                sb.AppendLine("AutoStartPromptShown=" + (AutoStartPromptShown ? "true" : "false"));
                 File.WriteAllText(ConfigPath, sb.ToString(), Encoding.UTF8);
             }
             catch
