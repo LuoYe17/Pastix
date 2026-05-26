@@ -42,6 +42,17 @@ dotnet build src/Pastix/Pastix.csproj -c Release
 
 v0.2 持久化已就位，朝 v1.0 打磨中。
 
+## 交流 / Bug 反馈
+
+- Bug 和功能建议请提 [Issue](https://github.com/LuoYe17/Pastix/issues)，方便公开追踪
+- QQ 群：**1101598658**（仅讨论使用问题，bug 一律 Issue）
+
+## 赞助
+
+如果觉得工具好用，可以请作者喝杯咖啡：[爱发电](https://afdian.com/a/luoye17)
+
+赞助不会改变任何开发计划，所有功能仍按公开 Roadmap 推进。
+
 ## 协议
 
 [MIT](LICENSE)
