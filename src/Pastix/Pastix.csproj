@@ -12,4 +12,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Reference Include="System.Security" />
+  </ItemGroup>
+
 </Project>

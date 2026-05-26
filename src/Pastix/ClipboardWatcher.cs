@@ -7,14 +7,16 @@ namespace Pastix
 {
     /// <summary>
     /// 监听系统剪贴板变化，维护一个内存里的最近文本历史（最新在前）。
-    /// v0.1：仅文本，最多 100 条，重复条目上移并刷新捕获时间。
+    /// v0.2：启动时从 history.dat 恢复，每次变化后 200ms 防抖落盘（DPAPI 加密）。
     /// </summary>
     internal sealed class ClipboardWatcher : IDisposable
     {
         private const int MaxItems = 100;
+        private const int SaveDebounceMs = 200;
 
         private readonly IntPtr _hwnd;
         private readonly LinkedList<ClipboardItem> _items = new LinkedList<ClipboardItem>();
+        private System.Windows.Forms.Timer _saveTimer;
         private bool _registered;
         private string _lastSeen; // 抑制 SetText 自身触发回环
 
@@ -28,9 +30,15 @@ namespace Pastix
         public void Start()
         {
             if (_registered) return;
+
+            // 先恢复历史，再注册监听并捕获当前剪贴板
+            foreach (var item in HistoryStore.Load()) _items.AddLast(item);
+
+            _saveTimer = new System.Windows.Forms.Timer { Interval = SaveDebounceMs };
+            _saveTimer.Tick += OnSaveTick;
+
             _registered = NativeMethods.AddClipboardFormatListener(_hwnd);
 
-            // 启动时抓一次当前剪贴板内容
             TryCaptureCurrent();
         }
 
@@ -83,7 +91,21 @@ namespace Pastix
             _items.AddFirst(new ClipboardItem(text, DateTime.Now));
             while (_items.Count > MaxItems) _items.RemoveLast();
 
+            ScheduleSave();
             Changed?.Invoke();
+        }
+
+        private void ScheduleSave()
+        {
+            if (_saveTimer == null) return;
+            _saveTimer.Stop();
+            _saveTimer.Start();
+        }
+
+        private void OnSaveTick(object sender, EventArgs e)
+        {
+            _saveTimer.Stop();
+            HistoryStore.Save(Snapshot());
         }
 
         public void Dispose()
@@ -92,6 +114,16 @@ namespace Pastix
             {
                 NativeMethods.RemoveClipboardFormatListener(_hwnd);
                 _registered = false;
+            }
+
+            if (_saveTimer != null)
+            {
+                bool pending = _saveTimer.Enabled;
+                _saveTimer.Stop();
+                _saveTimer.Dispose();
+                _saveTimer = null;
+                // 退出前若有未落盘的变更，立即同步一次，避免丢失最新条目
+                if (pending) HistoryStore.Save(Snapshot());
             }
         }
     }
